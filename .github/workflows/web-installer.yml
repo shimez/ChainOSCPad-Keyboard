@@ -26,14 +26,38 @@ jobs:
         include:
           - environment: xiao_esp32s3_usb
             slug: xiao-esp32s3-usb
+            chip: esp32s3
+            flash_size: 8MB
+            flash_mode: dio
+            boot_offset: "0x0"
+
           - environment: xiao_esp32s3_ble
             slug: xiao-esp32s3-ble
+            chip: esp32s3
+            flash_size: 8MB
+            flash_mode: dio
+            boot_offset: "0x0"
+
           - environment: xiao_esp32c3_ble
             slug: xiao-esp32c3-ble
+            chip: esp32c3
+            flash_size: 4MB
+            flash_mode: dio
+            boot_offset: "0x0"
+
           - environment: xiao_esp32c5_ble
             slug: xiao-esp32c5-ble
+            chip: esp32c5
+            flash_size: 8MB
+            flash_mode: dio
+            boot_offset: "0x2000"
+
           - environment: xiao_esp32c6_ble
             slug: xiao-esp32c6-ble
+            chip: esp32c6
+            flash_size: 4MB
+            flash_mode: dio
+            boot_offset: "0x0"
 
     steps:
       - name: Checkout repository
@@ -44,34 +68,71 @@ jobs:
         with:
           python-version: "3.12"
 
-      # Intentionally no ~/.platformio cache:
-      # stale package metadata previously broke ESP32-C5 builds.
+      # Deliberately no PlatformIO package cache.
+      # A stale package state previously broke the ESP32-C5 build.
       - name: Install PlatformIO
         run: python -m pip install --requirement .github/requirements-build.txt
 
       - name: Build firmware
-        run: pio run -e "${{ matrix.environment }}"
+        run: platformio run -e "${{ matrix.environment }}"
 
-      - name: Collect PlatformIO factory image
+      # This intentionally follows the proven ChainOSCPad release workflow:
+      # merge the board-specific bootloader, partition table, boot_app0 and
+      # application into one image, with ESP32-C5 using boot offset 0x2000.
+      - name: Create merged firmware
         shell: bash
         run: |
           set -euo pipefail
-          src=".pio/build/${{ matrix.environment }}/firmware.factory.bin"
-          dst="dist/${{ matrix.slug }}.bin"
 
-          if [[ ! -f "$src" ]]; then
-            echo "::error::PlatformIO did not generate $src"
-            echo "Build directory contents:"
-            find ".pio/build/${{ matrix.environment }}" -maxdepth 1 -type f -printf '%f\n' | sort
-            exit 1
-          fi
+          firmware="dist/${{ matrix.slug }}.bin"
+          esptool="$(find "$HOME/.platformio" -path '*/tool-esptoolpy/esptool.py' -print -quit)"
+          boot_app="$(find "$HOME/.platformio/packages" -path '*/tools/partitions/boot_app0.bin' -print -quit)"
+
+          test -n "$esptool"
+          test -f "$esptool"
+          test -n "$boot_app"
+          test -f "$boot_app"
+
+          build=".pio/build/${{ matrix.environment }}"
+          test -f "$build/bootloader.bin"
+          test -f "$build/partitions.bin"
+          test -f "$build/firmware.bin"
 
           mkdir -p dist
-          cp "$src" "$dst"
 
-          echo "Using PlatformIO-generated factory image:"
-          ls -lh "$src" "$dst"
-          sha256sum "$src" "$dst"
+          python "$esptool" \
+            --chip "${{ matrix.chip }}" merge_bin \
+            -o "$firmware" \
+            --flash_mode "${{ matrix.flash_mode }}" \
+            --flash_freq 80m \
+            --flash_size "${{ matrix.flash_size }}" \
+            "${{ matrix.boot_offset }}" "$build/bootloader.bin" \
+            0x8000 "$build/partitions.bin" \
+            0xe000 "$boot_app" \
+            0x10000 "$build/firmware.bin"
+
+          python - "$firmware" "${{ matrix.boot_offset }}" <<'PY'
+          import sys
+          from pathlib import Path
+
+          firmware = Path(sys.argv[1])
+          boot_offset = int(sys.argv[2], 0)
+
+          with firmware.open("rb") as stream:
+              stream.seek(boot_offset)
+              header = stream.read(1)
+
+          if header != b"\xe9":
+              raise SystemExit(
+                  f"Invalid bootloader header at {boot_offset:#x}: "
+                  f"{header.hex() or 'EOF'}"
+              )
+
+          print(f"Validated bootloader header at {boot_offset:#x}")
+          print(f"Merged image size: {firmware.stat().st_size} bytes")
+          PY
+
+          sha256sum "$firmware"
 
       - name: Upload firmware artifact
         uses: actions/upload-artifact@v4
@@ -102,10 +163,12 @@ jobs:
           merge-multiple: true
 
       - name: Assemble site and manifests
+        shell: bash
         env:
           VERSION: ${{ github.sha }}
         run: |
           set -euo pipefail
+
           mkdir -p site/manifests site/firmware
           cp web/installer.html site/index.html
           cp index.html site/configurator.html
@@ -120,17 +183,27 @@ jobs:
           version = os.environ["VERSION"][:7]
 
           variants = [
-              ("xiao-esp32s3-usb", "ChainOSCPad Keyboard - XIAO ESP32-S3 USB", "ESP32-S3"),
-              ("xiao-esp32s3-ble", "ChainOSCPad Keyboard - XIAO ESP32-S3 Bluetooth", "ESP32-S3"),
-              ("xiao-esp32c3-ble", "ChainOSCPad Keyboard - XIAO ESP32-C3 Bluetooth", "ESP32-C3"),
-              ("xiao-esp32c5-ble", "ChainOSCPad Keyboard - XIAO ESP32-C5 Bluetooth", "ESP32-C5"),
-              ("xiao-esp32c6-ble", "ChainOSCPad Keyboard - XIAO ESP32-C6 Bluetooth", "ESP32-C6"),
+              ("xiao-esp32s3-usb",
+               "ChainOSCPad Keyboard - XIAO ESP32-S3 USB",
+               "ESP32-S3"),
+              ("xiao-esp32s3-ble",
+               "ChainOSCPad Keyboard - XIAO ESP32-S3 Bluetooth",
+               "ESP32-S3"),
+              ("xiao-esp32c3-ble",
+               "ChainOSCPad Keyboard - XIAO ESP32-C3 Bluetooth",
+               "ESP32-C3"),
+              ("xiao-esp32c5-ble",
+               "ChainOSCPad Keyboard - XIAO ESP32-C5 Bluetooth",
+               "ESP32-C5"),
+              ("xiao-esp32c6-ble",
+               "ChainOSCPad Keyboard - XIAO ESP32-C6 Bluetooth",
+               "ESP32-C6"),
           ]
 
           for slug, name, chip in variants:
-              firmware = site / "firmware" / f"{slug}.bin"
-              if not firmware.is_file():
-                  raise SystemExit(f"Missing firmware: {firmware}")
+              binary = site / "firmware" / f"{slug}.bin"
+              if not binary.is_file():
+                  raise SystemExit(f"Missing firmware: {binary}")
 
               manifest = {
                   "name": name,
@@ -139,9 +212,6 @@ jobs:
                   "builds": [
                       {
                           "chipFamily": chip,
-                          # firmware.factory.bin is already a complete image
-                          # containing bootloader, partition table, boot_app0,
-                          # and application at the board-specific offsets.
                           "parts": [
                               {
                                   "path": f"../firmware/{slug}.bin",
@@ -152,12 +222,16 @@ jobs:
                   ],
               }
 
-              path = site / "manifests" / f"{slug}.json"
-              path.write_text(
+              manifest_path = site / "manifests" / f"{slug}.json"
+              manifest_path.write_text(
                   json.dumps(manifest, ensure_ascii=False, indent=2) + "\n",
                   encoding="utf-8",
               )
-              print(f"{path}: {firmware.stat().st_size} bytes")
+
+              print(
+                  f"{slug}: {binary.stat().st_size} bytes -> "
+                  f"{manifest_path}"
+              )
           PY
 
       - name: Configure Pages
