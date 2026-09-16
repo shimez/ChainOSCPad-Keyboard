@@ -19,40 +19,21 @@ jobs:
   build:
     name: Build ${{ matrix.environment }}
     runs-on: ubuntu-latest
+
     strategy:
       fail-fast: false
       matrix:
         include:
           - environment: xiao_esp32s3_usb
             slug: xiao-esp32s3-usb
-            chip: esp32s3
-            flash_size: 8MB
-            flash_mode: dio
-            boot_offset: "0x0"
           - environment: xiao_esp32s3_ble
             slug: xiao-esp32s3-ble
-            chip: esp32s3
-            flash_size: 8MB
-            flash_mode: dio
-            boot_offset: "0x0"
           - environment: xiao_esp32c3_ble
             slug: xiao-esp32c3-ble
-            chip: esp32c3
-            flash_size: 4MB
-            flash_mode: dio
-            boot_offset: "0x0"
           - environment: xiao_esp32c5_ble
             slug: xiao-esp32c5-ble
-            chip: esp32c5
-            flash_size: 8MB
-            flash_mode: dio
-            boot_offset: "0x2000"
           - environment: xiao_esp32c6_ble
             slug: xiao-esp32c6-ble
-            chip: esp32c6
-            flash_size: 4MB
-            flash_mode: dio
-            boot_offset: "0x0"
 
     steps:
       - name: Checkout repository
@@ -63,48 +44,34 @@ jobs:
         with:
           python-version: "3.12"
 
-      # Deliberately do not cache ~/.platformio.
-      # Stale PlatformIO package metadata previously broke the ESP32-C5 tool installation.
+      # Intentionally no ~/.platformio cache:
+      # stale package metadata previously broke ESP32-C5 builds.
       - name: Install PlatformIO
         run: python -m pip install --requirement .github/requirements-build.txt
 
       - name: Build firmware
         run: pio run -e "${{ matrix.environment }}"
 
-      - name: Create merged firmware
+      - name: Collect PlatformIO factory image
+        shell: bash
         run: |
+          set -euo pipefail
+          src=".pio/build/${{ matrix.environment }}/firmware.factory.bin"
+          dst="dist/${{ matrix.slug }}.bin"
+
+          if [[ ! -f "$src" ]]; then
+            echo "::error::PlatformIO did not generate $src"
+            echo "Build directory contents:"
+            find ".pio/build/${{ matrix.environment }}" -maxdepth 1 -type f -printf '%f\n' | sort
+            exit 1
+          fi
+
           mkdir -p dist
-          firmware="dist/${{ matrix.slug }}.bin"
-          esptool="$(find "$HOME/.platformio" -path '*/tool-esptoolpy/esptool.py' -print -quit)"
-          boot_app="$(find "$HOME/.platformio/packages" -path '*/tools/partitions/boot_app0.bin' -print -quit)"
-          test -n "$esptool"
-          test -n "$boot_app"
+          cp "$src" "$dst"
 
-          python "$esptool" \
-            --chip "${{ matrix.chip }}" merge_bin \
-            -o "$firmware" \
-            --flash_mode "${{ matrix.flash_mode }}" \
-            --flash_freq 80m \
-            --flash_size "${{ matrix.flash_size }}" \
-            "${{ matrix.boot_offset }}" ".pio/build/${{ matrix.environment }}/bootloader.bin" \
-            0x8000 ".pio/build/${{ matrix.environment }}/partitions.bin" \
-            0xe000 "$boot_app" \
-            0x10000 ".pio/build/${{ matrix.environment }}/firmware.bin"
-
-          python - "$firmware" "${{ matrix.boot_offset }}" <<'PY'
-          import sys
-          from pathlib import Path
-          firmware = Path(sys.argv[1])
-          boot_offset = int(sys.argv[2], 0)
-          with firmware.open("rb") as stream:
-              stream.seek(boot_offset)
-              header = stream.read(1)
-          if header != b"\xe9":
-              raise SystemExit(
-                  f"Invalid bootloader header at {boot_offset:#x}: {header.hex() or 'EOF'}"
-              )
-          print(f"Validated bootloader header at {boot_offset:#x}")
-          PY
+          echo "Using PlatformIO-generated factory image:"
+          ls -lh "$src" "$dst"
+          sha256sum "$src" "$dst"
 
       - name: Upload firmware artifact
         uses: actions/upload-artifact@v4
@@ -118,6 +85,7 @@ jobs:
     name: Deploy GitHub Pages
     needs: build
     runs-on: ubuntu-latest
+
     environment:
       name: github-pages
       url: ${{ steps.deployment.outputs.page_url }}
@@ -137,17 +105,20 @@ jobs:
         env:
           VERSION: ${{ github.sha }}
         run: |
+          set -euo pipefail
           mkdir -p site/manifests site/firmware
           cp web/installer.html site/index.html
           cp index.html site/configurator.html
           cp firmware/*.bin site/firmware/
 
           python - <<'PY'
-          import json, os
+          import json
+          import os
           from pathlib import Path
 
           site = Path("site")
           version = os.environ["VERSION"][:7]
+
           variants = [
               ("xiao-esp32s3-usb", "ChainOSCPad Keyboard - XIAO ESP32-S3 USB", "ESP32-S3"),
               ("xiao-esp32s3-ble", "ChainOSCPad Keyboard - XIAO ESP32-S3 Bluetooth", "ESP32-S3"),
@@ -155,20 +126,38 @@ jobs:
               ("xiao-esp32c5-ble", "ChainOSCPad Keyboard - XIAO ESP32-C5 Bluetooth", "ESP32-C5"),
               ("xiao-esp32c6-ble", "ChainOSCPad Keyboard - XIAO ESP32-C6 Bluetooth", "ESP32-C6"),
           ]
+
           for slug, name, chip in variants:
+              firmware = site / "firmware" / f"{slug}.bin"
+              if not firmware.is_file():
+                  raise SystemExit(f"Missing firmware: {firmware}")
+
               manifest = {
                   "name": name,
                   "version": version,
                   "new_install_prompt_erase": True,
-                  "builds": [{
-                      "chipFamily": chip,
-                      "parts": [{"path": f"../firmware/{slug}.bin", "offset": 0}]
-                  }]
+                  "builds": [
+                      {
+                          "chipFamily": chip,
+                          # firmware.factory.bin is already a complete image
+                          # containing bootloader, partition table, boot_app0,
+                          # and application at the board-specific offsets.
+                          "parts": [
+                              {
+                                  "path": f"../firmware/{slug}.bin",
+                                  "offset": 0
+                              }
+                          ],
+                      }
+                  ],
               }
-              (site / "manifests" / f"{slug}.json").write_text(
+
+              path = site / "manifests" / f"{slug}.json"
+              path.write_text(
                   json.dumps(manifest, ensure_ascii=False, indent=2) + "\n",
                   encoding="utf-8",
               )
+              print(f"{path}: {firmware.stat().st_size} bytes")
           PY
 
       - name: Configure Pages
