@@ -6,6 +6,10 @@
 #include "USBHIDKeyboard.h"
 #include "USBHIDConsumerControl.h"
 
+#ifndef KEY_SPACE
+#define KEY_SPACE 0x20
+#endif
+
 // ============================================================
 // ChainOSCPad wiring for Seeed Studio XIAO ESP32S3
 // ============================================================
