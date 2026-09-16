@@ -1,0 +1,55 @@
+name: Build firmware
+
+on:
+  push:
+    branches:
+      - main
+  pull_request:
+    branches:
+      - main
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+jobs:
+  build:
+    name: Build ${{ matrix.environment }}
+    runs-on: ubuntu-latest
+
+    strategy:
+      fail-fast: false
+      matrix:
+        environment:
+          - xiao_esp32s3_usb
+          - xiao_esp32s3_ble
+          - xiao_esp32c3_ble
+          - xiao_esp32c5_ble
+          - xiao_esp32c6_ble
+
+    steps:
+      - name: Checkout repository
+        uses: actions/checkout@v4
+
+      - name: Set up Python
+        uses: actions/setup-python@v5
+        with:
+          python-version: "3.x"
+          cache: pip
+
+      - name: Cache PlatformIO
+        uses: actions/cache@v4
+        with:
+          path: |
+            ~/.platformio/.cache
+            ~/.platformio/packages
+            ~/.platformio/platforms
+          key: ${{ runner.os }}-platformio-${{ hashFiles('platformio.ini') }}
+          restore-keys: |
+            ${{ runner.os }}-platformio-
+
+      - name: Install PlatformIO
+        run: python -m pip install --upgrade platformio
+
+      - name: Build firmware
+        run: pio run -e ${{ matrix.environment }}
