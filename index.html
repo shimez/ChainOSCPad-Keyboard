@@ -239,16 +239,25 @@ select:focus{border-color:var(--accent);box-shadow:0 0 0 3px var(--accent-soft)}
 }
 .quick:hover{background:#f8fafc}
 footer{
-  margin:0 24px 18px;
+  position:sticky;
+  bottom:0;
+  z-index:20;
+  margin:0;
+  padding:10px 24px 14px;
   display:grid;
   grid-template-columns:1fr auto auto;
   align-items:center;
   gap:14px;
+  background:linear-gradient(to bottom,rgba(246,247,249,.88),var(--bg) 30%);
+  backdrop-filter:blur(6px);
 }
 .log{padding:12px 14px;min-height:56px}
 .log-title{font-size:12px;font-weight:750;color:var(--muted);margin-bottom:5px}
 .log-line{display:flex;align-items:center;gap:8px;font-size:13px;color:#344054}
 .fw{font-size:13px;color:#475467;white-space:nowrap}
+.legal{font-size:11px;color:#667085;white-space:nowrap}
+.legal a{color:inherit;text-decoration:none}
+.legal a:hover{text-decoration:underline}
 
 @media(max-width:1180px){
   main{grid-template-columns:1fr}
@@ -258,7 +267,14 @@ footer{
   header{padding:12px 14px}
   .actions{margin-left:0;width:100%}
   main{padding:12px}
-  footer{margin:0 12px 12px;grid-template-columns:1fr}
+  footer{
+    position:static;
+    margin:0;
+    padding:0 12px 12px;
+    grid-template-columns:1fr;
+    background:transparent;
+    backdrop-filter:none;
+  }
   .device{transform-origin:top left;zoom:.8}
 }
 </style>
@@ -273,6 +289,7 @@ footer{
       <button class="btn" id="connectBtn">接続</button>
       <button class="btn" id="readBtn">設定を読み込む</button>
       <button class="btn" id="exportBtn">設定をファイルに保存</button>
+      <button class="btn" id="importDeviceBtn">設定ファイルをデバイスに反映</button>
       <button class="btn" id="saveDeviceBtn">デバイスに保存</button>
     </div>
   </header>
@@ -352,7 +369,10 @@ footer{
       <div class="log-title">メッセージログ</div>
       <div class="log-line"><span class="dot" id="logDot"></span><span id="logText">未接続です。</span></div>
     </section>
-    <div class="fw">ファームウェア: v1.0.0</div>
+    <div>
+      <div class="fw">ファームウェア: v1.0.0</div>
+      <div class="legal">© 2026 Shimez · MIT License · Created with assistance from ChatGPT by OpenAI</div>
+    </div>
     <button class="btn light danger" id="factoryResetBtn">設定を初期化（工場出荷状態）</button>
   </footer>
 </div>
@@ -380,6 +400,8 @@ const connectBtn = document.getElementById("connectBtn");
 const readBtn = document.getElementById("readBtn");
 const saveDeviceBtn = document.getElementById("saveDeviceBtn");
 const exportBtn = document.getElementById("exportBtn");
+const importDeviceBtn = document.getElementById("importDeviceBtn");
+const importFile = document.getElementById("importFile");
 const factoryResetBtn = document.getElementById("factoryResetBtn");
 const encCw = document.getElementById("encCw");
 const encCcw = document.getElementById("encCcw");
@@ -697,6 +719,38 @@ exportBtn.addEventListener("click", ()=>{
   a.click();
   URL.revokeObjectURL(url);
   setLog("設定JSONを保存しました。");
+});
+
+importDeviceBtn.addEventListener("click", ()=>{
+  if (!writer) {
+    setLog("設定ファイルを反映するには、先にデバイスへ接続してください。", false);
+    return;
+  }
+  // Allow selecting the same file again after a previous import.
+  importFile.value = "";
+  importFile.click();
+});
+
+importFile.addEventListener("change", async ()=>{
+  const file = importFile.files?.[0];
+  if (!file) return;
+
+  try {
+    if (!writer) throw new Error("デバイスに接続されていません");
+
+    const cfg = JSON.parse(await file.text());
+
+    // Validate/render the imported configuration before sending it.
+    applyConfig(cfg);
+
+    const res = await sendCommand({cmd:"set", config:collectConfig()});
+    applyConfig(res.config);
+    setLog(`設定ファイル「${file.name}」をデバイスに反映し、LittleFSへ保存しました。`);
+  } catch(e) {
+    setLog("設定ファイル反映エラー: " + (e?.message || "不明なエラー"), false);
+  } finally {
+    importFile.value = "";
+  }
 });
 
 async function resetDevice() {

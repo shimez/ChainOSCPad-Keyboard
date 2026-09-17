@@ -135,6 +135,16 @@ Bluetooth版を書き込んだ場合は、PCのBluetooth設定から **`ChainOSC
 
 通常の設定変更ではファイルを直接編集する必要はありません。WebSerial Configuratorを使用してください。
 
+## Development
+
+This project was created with the assistance of ChatGPT by OpenAI.
+
+ChatGPT was used to assist with firmware design and implementation, WebSerial Configurator development, CI/Web Installer configuration, debugging, and documentation. Final integration, hardware validation, testing, and project decisions were performed by the project author.
+
+## License
+
+This project is licensed under the MIT License. See [LICENSE](LICENSE) for details.
+
 ## Changelog
 
 変更履歴は [CHANGELOG.md](CHANGELOG.md) を参照してください。
