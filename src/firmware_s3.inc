@@ -1,6 +1,7 @@
 #include <Arduino.h>
 #include <ArduinoJson.h>
 #include <LittleFS.h>
+#include "firmware_version.h"
 
 #include "USB.h"
 #include "USBHIDKeyboard.h"
@@ -598,6 +599,7 @@ static bool loadConfig() {
 static void sendConfigResponse(const char *eventName = nullptr) {
     JsonDocument doc;
     doc["ok"] = true;
+    doc["firmware_version"] = CHAINOSCPAD_FIRMWARE_VERSION;
     if (eventName) doc["event"] = eventName;
 
     JsonObject cfg = doc["config"].to<JsonObject>();

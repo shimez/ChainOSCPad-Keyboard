@@ -377,7 +377,7 @@ footer{
       <div class="log-line"><span class="dot" id="logDot"></span><span id="logText">未接続です。</span></div>
     </section>
     <div>
-      <div class="fw">ファームウェア: v1.0.0</div>
+      <div class="fw">設定画面：v6.6／ファームウェア：<span id="firmwareVersion">未接続</span></div>
       <div class="legal">© 2026 Shimez · MIT License · Created with assistance from ChatGPT by OpenAI</div>
     </div>
     <button class="btn light danger" id="factoryResetBtn">設定を初期化（工場出荷状態）</button>
@@ -431,6 +431,7 @@ function rebuildKeyOptions() {
 }
 const logText = document.getElementById("logText");
 const connText = document.getElementById("connText");
+const firmwareVersion = document.getElementById("firmwareVersion");
 const connDot = document.getElementById("connDot");
 const logDot = document.getElementById("logDot");
 const connectBtn = document.getElementById("connectBtn");
@@ -469,6 +470,7 @@ function setLog(message, ok=true) {
 }
 
 function setConnection(connected) {
+  firmwareVersion.textContent = connected ? "取得中" : "未接続";
   connText.textContent = connected ? "接続済み" : "未接続";
   connDot.style.background = connected ? "var(--ok)" : "#9ca3af";
   connectBtn.textContent = connected ? "切断" : "接続";
@@ -594,7 +596,13 @@ function dispatchLine(line) {
   if (!p) return;
 
   clearTimeout(p.timer);
-  if (msg.ok) p.resolve(msg);
+  if (msg.ok) {
+    if (msg.config) {
+      firmwareVersion.textContent = typeof msg.firmware_version === "string" && msg.firmware_version.trim()
+        ? `v${msg.firmware_version.trim()}` : "不明（旧ファーム）";
+    }
+    p.resolve(msg);
+  }
   else p.reject(new Error(msg.error || "デバイスエラー"));
 }
 
@@ -629,6 +637,7 @@ async function readLoop() {
   } catch (e) {
     console.error(e);
     if (!disconnecting) {
+      firmwareVersion.textContent = "未接続";
       setLog("接続が切断されました。", false);
     }
   }
