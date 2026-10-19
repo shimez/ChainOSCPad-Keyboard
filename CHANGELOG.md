@@ -2,6 +2,17 @@
 
 ChainOSCPad ESP32 Unified Keyboard Firmwareの主な変更履歴です。
 
+## v6.5
+
+### Added
+- ConfiguratorにJIS／US配列切り替えと、配列に応じた記号の選択肢を追加
+- 記号選択時に必要なShiftを自動設定し、配列設定をデバイス・JSONへ保存
+- USB／BluetoothでJIS固有の円記号・ろ・右角括弧キーに対応
+- 配列情報のない旧設定はUSとして読み込む互換性を維持
+
+### Fixed
+- RISC-Vツールチェーンが入れ子のフォルダーに配置された環境でも、コンパイラの検索パスを自動補完してビルドできるよう修正
+
 ## v6.4
 
 ### Refactor

@@ -324,6 +324,13 @@ footer{
     </section>
 
     <aside class="settings">
+      <section class="panel section">
+        <div class="field-row">
+          <label for="keyboardLayout">キーボード配列</label>
+          <select id="keyboardLayout"><option value="US">US（英語）</option><option value="JIS">JIS（日本語）</option></select>
+        </div>
+        <p>PC側の配列に合わせて選択してください。記号を選ぶと必要なShiftも設定されます。</p>
+      </section>
       <section class="panel section" id="encoderSettings" hidden>
         <h2>ロータリーエンコーダーの設定</h2>
         <div class="field-row">
@@ -381,6 +388,7 @@ footer{
 <script>
 const DEFAULT_CONFIG = {
   version: 1,
+  layout: "US",
   keys: ["F13","F14","F15","F16","F17","F18","F19","F20","F21","F22","F23","F24"],
   encoder: { cw:"VOLUME_UP", ccw:"VOLUME_DOWN", push:"MUTE" }
 };
@@ -392,6 +400,35 @@ const modifiers = Array.from({length:12}, ()=>({ctrl:false,shift:false,alt:false
 const keys = [...document.querySelectorAll(".key")];
 const badge = document.getElementById("selectedBadge");
 const assign = document.getElementById("keyAssign");
+const keyboardLayout = document.getElementById("keyboardLayout");
+const baseOptions = [...assign.options].map(option => [option.value, option.textContent]);
+// Values are physical-key tokens understood by both firmware variants.
+const symbolKeys = {
+  US: [["-","-","_"],["=","=","+"],["[","[","{"],["]","]","}"],
+    ["\\","\\","|"],[";",";",":"],["'","'",'"'],["`","`","~"],
+    [",",",","<"],[".",".",">"],["/","/","?"]],
+  JIS: [["-","-","="],["=","^","~"],["[","@","`"],["]","[","{"],
+    ["JIS_RBRACKET","]","}"],[";",";","+"],["'",":","*"],
+    [",",",","<"],[".",".",">"],["/","/","?"],
+    ["JIS_YEN","¥","|"],["JIS_RO","\\","_"]]
+};
+const shiftedDigits = { US: "!@#$%^&*()", JIS: '!"#$%&\'()' };
+
+function symbolOptions() {
+  const layout = keyboardLayout.value;
+  return [
+    ...symbolKeys[layout].flatMap(([key, plain, shifted]) => [[key, plain], [`SHIFT+${key}`, shifted]]),
+    ...[...shiftedDigits[layout]].map((symbol, i) => [`SHIFT+${(i+1)%10}`, symbol])
+  ];
+}
+
+function rebuildKeyOptions() {
+  assign.replaceChildren(...baseOptions.map(([value, label]) => new Option(label, value)));
+  const group = document.createElement("optgroup");
+  group.label = `${keyboardLayout.value} 記号`;
+  for (const [value, label] of symbolOptions()) group.append(new Option(label, value));
+  assign.append(group);
+}
 const logText = document.getElementById("logText");
 const connText = document.getElementById("connText");
 const connDot = document.getElementById("connDot");
@@ -470,7 +507,16 @@ function refreshEditor() {
   badge.textContent = `SW${selected+1}`;
   assign.disabled = false;
   Object.values(modInputs).forEach(el => el.disabled = false);
-  assign.value = assignments[selected];
+  assign.querySelectorAll("[data-current]").forEach(option => option.remove());
+  const base = assignments[selected];
+  const shifted = `SHIFT+${base}`;
+  const value = modifiers[selected].shift && symbolOptions().some(([key]) => key === shifted) ? shifted : base;
+  if (![...assign.options].some(option => option.value === value)) {
+    const option = new Option(`${value}（現在の割り当て）`, value);
+    option.dataset.current = "true";
+    assign.append(option);
+  }
+  assign.value = value;
 
   for (const [name,input] of Object.entries(modInputs)) {
     input.checked = modifiers[selected][name];
@@ -481,6 +527,12 @@ function applyConfig(cfg) {
   if (!cfg || !Array.isArray(cfg.keys) || cfg.keys.length !== 12) {
     throw new Error("keys は12要素である必要があります");
   }
+
+  if (cfg.layout !== undefined && !["US", "JIS"].includes(cfg.layout)) {
+    throw new Error("layout は US または JIS である必要があります");
+  }
+  keyboardLayout.value = cfg.layout ?? "US";
+  rebuildKeyOptions();
 
   for (let i=0; i<12; i++) {
     const parsed = splitAction(cfg.keys[i]);
@@ -500,6 +552,7 @@ function applyConfig(cfg) {
 function collectConfig() {
   return {
     version: 1,
+    layout: keyboardLayout.value,
     keys: Array.from({length:12}, (_,i)=>composeAction(i)),
     encoder: {
       cw: encCw.value,
@@ -662,13 +715,26 @@ keys.forEach((key,i)=>{
 });
 
 assign.addEventListener("change",()=>{
-  assignments[selected] = assign.value;
+  const value = assign.value;
+  const parsed = splitAction(value);
+  assignments[selected] = parsed.key;
+  if (symbolOptions().some(([key]) => key === value)) {
+    modifiers[selected].shift = parsed.mods.has("SHIFT");
+  }
+  refreshEditor();
   setLog(`SW${selected+1}: ${composeAction(selected)}`);
+});
+
+keyboardLayout.addEventListener("change",()=>{
+  rebuildKeyOptions();
+  refreshEditor();
+  setLog(`${keyboardLayout.value}配列に切り替えました。既存の割り当ては物理キー位置を維持します。`);
 });
 
 for (const [name,input] of Object.entries(modInputs)) {
   input.addEventListener("change",()=>{
     modifiers[selected][name] = input.checked;
+    refreshEditor();
     setLog(`SW${selected+1}: ${composeAction(selected)}`);
   });
 }

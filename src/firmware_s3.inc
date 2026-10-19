@@ -100,6 +100,7 @@ static void serviceStatusLed() {
 // ============================================================
 
 struct DeviceConfig {
+    String layout;
     String keys[KEY_COUNT];
     String encoderCw;
     String encoderCcw;
@@ -116,6 +117,7 @@ static const char *DEFAULT_KEYS[KEY_COUNT] = {
 };
 
 static void setDefaultConfig() {
+    config.layout = "US";
     for (uint8_t i = 0; i < KEY_COUNT; ++i) {
         config.keys[i] = DEFAULT_KEYS[i];
     }
@@ -179,6 +181,12 @@ static bool isMediaAction(const String &raw, uint16_t &usage) {
 
 static bool tokenToKeyCode(const String &rawToken, uint8_t &code) {
     String token = normalizeToken(rawToken);
+
+    // International usages exceed the Arduino keycode offset range.
+    // Reserve unused control characters for pressRaw/releaseRaw below.
+    if (token == "JIS_RO")       { code = 1; return true; }
+    if (token == "JIS_YEN")      { code = 2; return true; }
+    if (token == "JIS_RBRACKET") { code = 0x32 + 0x88; return true; }
 
     if (token.length() == 1) {
         const char c = token.charAt(0);
@@ -383,7 +391,8 @@ static uint8_t keyCodeRefs[256] = {0};
 
 static void pressCodeRef(uint8_t code) {
     if (keyCodeRefs[code] == 0) {
-        Keyboard.press(code);
+        if (code == 1 || code == 2) Keyboard.pressRaw(code == 1 ? 0x87 : 0x89);
+        else Keyboard.press(code);
     }
     if (keyCodeRefs[code] < 255) {
         ++keyCodeRefs[code];
@@ -395,7 +404,8 @@ static void releaseCodeRef(uint8_t code) {
 
     --keyCodeRefs[code];
     if (keyCodeRefs[code] == 0) {
-        Keyboard.release(code);
+        if (code == 1 || code == 2) Keyboard.releaseRaw(code == 1 ? 0x87 : 0x89);
+        else Keyboard.release(code);
     }
 }
 
@@ -467,6 +477,7 @@ static bool validateActionString(const String &raw) {
 
 static void configToJson(JsonObject obj) {
     obj["version"] = CHAINOSCPAD_CONFIG_VERSION;
+    obj["layout"] = config.layout;
 
     JsonArray keys = obj["keys"].to<JsonArray>();
     for (uint8_t i = 0; i < KEY_COUNT; ++i) {
@@ -497,6 +508,12 @@ static bool jsonToConfig(JsonObjectConst obj, DeviceConfig &out, String &error) 
     }
 
     DeviceConfig candidate;
+    candidate.layout = obj["layout"] | "US";
+    if ((!obj["layout"].isNull() && !obj["layout"].is<const char *>()) ||
+        (candidate.layout != "US" && candidate.layout != "JIS")) {
+        error = "config.layout must be US or JIS";
+        return false;
+    }
 
     for (uint8_t i = 0; i < KEY_COUNT; ++i) {
         if (!keys[i].is<const char *>()) {

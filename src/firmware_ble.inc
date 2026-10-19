@@ -121,10 +121,10 @@ static const uint8_t reportMap[] = {
     0x95, 0x06,       // Report Count (6)
     0x75, 0x08,       // Report Size (8)
     0x15, 0x00,
-    0x25, 0x73,       // Logical Maximum
+    0x26, 0x89, 0x00, // Logical Maximum (International3 / JIS Yen)
     0x05, 0x07,
     0x19, 0x00,
-    0x29, 0x73,
+    0x29, 0x89,
     0x81, 0x00,       // Input (Data,Array)
     0xC0,             // End Collection
 
@@ -365,6 +365,7 @@ static void beginBleHid() {
 // ============================================================
 
 struct DeviceConfig {
+    String layout;
     String keys[KEY_COUNT];
     String encoderCw;
     String encoderCcw;
@@ -381,6 +382,7 @@ static const char *DEFAULT_KEYS[KEY_COUNT] = {
 };
 
 static void setDefaultConfig() {
+    config.layout = "US";
     for (uint8_t i = 0; i < KEY_COUNT; ++i) config.keys[i] = DEFAULT_KEYS[i];
     config.encoderCw = "VOLUME_UP";
     config.encoderCcw = "VOLUME_DOWN";
@@ -420,6 +422,10 @@ static bool isMediaAction(const String &raw, uint16_t &usage) {
 // USB HID Usage IDs (Keyboard/Keypad page).
 static bool tokenToUsage(const String &rawToken, uint8_t &usage) {
     String token = normalizeToken(rawToken);
+
+    if (token == "JIS_RO")       { usage = 0x87; return true; }
+    if (token == "JIS_YEN")      { usage = 0x89; return true; }
+    if (token == "JIS_RBRACKET") { usage = 0x32; return true; }
 
     if (token.length() == 1) {
         const char c = token.charAt(0);
@@ -603,6 +609,7 @@ static void tapAction(const String &raw) {
 
 static void configToJson(JsonObject obj) {
     obj["version"] = CHAINOSCPAD_CONFIG_VERSION;
+    obj["layout"] = config.layout;
 
     JsonArray keys = obj["keys"].to<JsonArray>();
     for (uint8_t i = 0; i < KEY_COUNT; ++i) keys.add(config.keys[i]);
@@ -631,6 +638,12 @@ static bool jsonToConfig(JsonObjectConst obj, DeviceConfig &out, String &error) 
     }
 
     DeviceConfig candidate;
+    candidate.layout = obj["layout"] | "US";
+    if ((!obj["layout"].isNull() && !obj["layout"].is<const char *>()) ||
+        (candidate.layout != "US" && candidate.layout != "JIS")) {
+        error = "config.layout must be US or JIS";
+        return false;
+    }
 
     for (uint8_t i = 0; i < KEY_COUNT; ++i) {
         if (!keys[i].is<const char *>()) {
